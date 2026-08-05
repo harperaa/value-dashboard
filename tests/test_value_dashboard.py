@@ -233,3 +233,32 @@ def test_proven_unsupported_carry_doc_links(home, monkeypatch):
     x = usage.collect_xai()
     assert x["state"] == "unsupported" and "Management" in x["note"]
     assert x["docUrl"].startswith("https://docs.x.ai")
+
+
+def test_token_economy_concepts(home):
+    # supervision deduction: 10% of automated hours at the effective rate
+    out = roi.compute(params={**roi.DEFAULT_PARAMS,
+                              "hoursBasis": "assumptions",
+                              "aiMonthlyManualUsd": 100},
+                      measured_tokens_monthly=0)
+    hours = out["assumptionHoursMonthly"]           # 80 x 55% = 44
+    rate = [s for s in out["steps"] if s["n"] == 3][0]["value"]
+    assert out["supervisionUsd"] == pytest.approx(hours * 0.10 * rate, abs=1)
+    step6 = [s for s in out["steps"] if s["n"] == 6][0]
+    assert "supervision" in step6["label"].lower() or \
+        "review" in step6["formula"]
+
+    # FTE cap: token hours can never exceed the task's total hours
+    big = roi.compute(params={**roi.DEFAULT_PARAMS,
+                              "aiMonthlyManualUsd": 100},
+                      measured_tokens_monthly=50_000_000)
+    assert big["tokenHoursMonthly"] == 80.0         # capped at hours_month
+    assert big["tokenHoursCapped"] is True
+
+    # per-token human-cost anchor: $25-40 per million tokens
+    assert big["tokenAnchor"]["lowUsd"] == pytest.approx(50 * 25, abs=1)
+    assert big["tokenAnchor"]["highUsd"] == pytest.approx(50 * 40, abs=1)
+
+    # supervision clamps 0-50
+    p = roi.save_params({"supervisionPct": 99})
+    assert p["supervisionPct"] == 50.0

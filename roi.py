@@ -46,6 +46,17 @@ STANDARD_RATES = {"analysis": 75.0, "engineering": 95.0, "marketing": 60.0}
 WORDS_PER_TOKEN = 0.75
 HUMAN_WORDS_PER_HOUR = 600.0
 TOKEN_UTILIZATION = 0.35
+# Token Economy anchors (meaningfultech.com "The Token Economy — what a
+# $100,000 employee really costs"): a fully-burdened $135k knowledge
+# worker produces ~1.17M output tokens/yr (7-10M total throughput), which
+# prices human output at $25-40 per MILLION tokens once adjusted to the
+# 2-4 actually-productive hours per day. We use the range as a displayed
+# cross-check on the words-based hours model, and its verification-burden
+# finding (~4.3 h/week, >10% of work time) as the default supervision
+# deduction — AI output someone must review isn't free labor.
+HUMAN_COST_PER_MTOK_LOW = 25.0
+HUMAN_COST_PER_MTOK_HIGH = 40.0
+DEFAULT_SUPERVISION_PCT = 10.0
 BLENDED_RATE = round(sum(STANDARD_RATES.values()) / len(STANDARD_RATES), 2)
 PAYROLL_BURDEN = 1.30
 # ai-saves.com automation medians by task type
@@ -65,6 +76,8 @@ DEFAULT_PARAMS = {
     "implementationUsd": 0,       # mentees build inside the platform
     "taskLabel": "AI-assisted business building (blended)",
     "hoursBasis": "auto",         # auto | assumptions | tokens
+    "supervisionPct": DEFAULT_SUPERVISION_PCT,   # % of automated hours a
+    # human spends reviewing AI output (Token Economy: >10% of work time)
     "source": "defaults",
 }
 
@@ -91,6 +104,8 @@ def save_params(updates: dict) -> dict:
             p[k] = min(5.0, max(1.0, float(v)))
         elif k in ("automationPct",):
             p[k] = min(85.0, max(5.0, float(v)))
+        elif k in ("supervisionPct",):
+            p[k] = min(50.0, max(0.0, float(v)))
         elif k in ("hoursBasis",):
             p[k] = v if v in ("auto", "assumptions", "tokens") else "auto"
         elif k in ("taskLabel", "source", "derivedNote"):
@@ -125,14 +140,21 @@ def compute(params: Optional[dict] = None,
     team_cost = employees * salary * PAYROLL_BURDEN                  # 1
     hours_month = employees * hpw * wpm                              # 2
     hourly_rate = team_cost / hours_month if hours_month else 0.0    # 3
-    tok_hours = token_hours(int(measured_tokens_monthly or 0))
+    tok_hours_raw = token_hours(int(measured_tokens_monthly or 0))
+    # FTE sanity cap (Token Economy: agents burn far more tokens than the
+    # human throughput they replace) — you can't save more hours than the
+    # task actually takes
+    tok_hours = min(tok_hours_raw, hours_month)
     basis = p.get("hoursBasis", "auto")
     use_tokens = (basis == "tokens"
                   or (basis == "auto" and tok_hours > 0))
     assumption_hours = hours_month * auto
     automated_hours = tok_hours if use_tokens else assumption_hours  # 4
     gross_monthly = automated_hours * hourly_rate                    # 5
-    net_monthly = gross_monthly - ai_monthly                         # 6
+    supervision_pct = float(p.get("supervisionPct",
+                                  DEFAULT_SUPERVISION_PCT)) / 100.0
+    supervision_usd = automated_hours * supervision_pct * hourly_rate
+    net_monthly = gross_monthly - ai_monthly - supervision_usd       # 6
     payback_months = (impl / net_monthly) if net_monthly > 0 else None  # 7
     annual_net = net_monthly * 12 - impl
     denominator = 12 * ai_monthly + impl                             # 8
@@ -166,8 +188,12 @@ def compute(params: Optional[dict] = None,
             {"n": 5, "label": "Gross savings",
              "formula": "step 4 x step 3",
              "value": round(gross_monthly, 2), "unit": "$/mo"},
-            {"n": 6, "label": "Net savings (minus AI cost)",
-             "formula": f"step 5 - ${ai_monthly:,.2f}",
+            {"n": 6,
+             "label": "Net savings (minus AI cost and supervision)",
+             "formula": (f"step 5 - ${ai_monthly:,.2f} AI - "
+                         f"${supervision_usd:,.2f} review time "
+                         f"({supervision_pct:.0%} of automated hours — "
+                         "the Token Economy verification burden)"),
              "value": round(net_monthly, 2), "unit": "$/mo"},
             {"n": 7, "label": "Payback",
              "formula": f"${impl:,.0f} / step 6",
@@ -181,6 +207,14 @@ def compute(params: Optional[dict] = None,
              "unit": "%"},
         ],
         "hoursBasis": "tokens" if use_tokens else "assumptions",
+        "supervisionUsd": round(supervision_usd, 2),
+        "tokenHoursCapped": tok_hours_raw > hours_month,
+        "tokenAnchor": ({
+            "lowUsd": round(measured_tokens_monthly / 1e6
+                            * HUMAN_COST_PER_MTOK_LOW, 2),
+            "highUsd": round(measured_tokens_monthly / 1e6
+                             * HUMAN_COST_PER_MTOK_HIGH, 2),
+        } if measured_tokens_monthly else None),
         "tokenHoursMonthly": round(tok_hours, 1),
         "assumptionHoursMonthly": round(assumption_hours, 1),
         "measuredTokensMonthly": int(measured_tokens_monthly or 0),

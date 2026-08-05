@@ -314,7 +314,18 @@
               "labor saved is measured from real token usage: " +
               Number(roi.measuredTokensMonthly).toLocaleString() +
               " tokens ≈ " + roi.tokenHoursMonthly + " h of human-equivalent " +
-              "output this period")
+              "output this period" +
+              (roi.tokenHoursCapped
+                ? " (capped at the task's total hours — agents burn far " +
+                  "more tokens than the human throughput they replace)"
+                : ""))
+          : null,
+        roi.tokenAnchor
+          ? h("div", { className: "vd-note", style: { marginTop: 4 } },
+              "cross-check — at the Token Economy's adjusted human cost of " +
+              "$25–40 per million tokens, this usage ≈ " +
+              fmtMoney(roi.tokenAnchor.lowUsd) + "–" +
+              fmtMoney(roi.tokenAnchor.highUsd) + " of human labor")
           : null,
         h("div", { className: "vd-stats" },
           h("div", { className: "vd-stat" },
@@ -413,6 +424,7 @@
               field("hours/week", "hoursPerWeek", 0.5),
               field("weeks/mo", "weeksPerMonth", 0.1),
               field("automation %", "automationPct", 5),
+              field("review overhead %", "supervisionPct", 1),
               field("manual AI spend $/mo", "aiMonthlyManualUsd", 10),
               field("implementation $", "implementationUsd", 100),
               h("div", { className: "vd-field" },
@@ -434,7 +446,9 @@
               params.employees + " person(s) · " +
               fmtMoney(params.salaryMonthly) + "/mo gross · " +
               params.hoursPerWeek + " h/wk · " +
-              params.automationPct + "% automation · manual AI spend " +
+              params.automationPct + "% automation · " +
+              (params.supervisionPct != null ? params.supervisionPct : 10) +
+              "% review overhead · manual AI spend " +
               fmtMoney(params.aiMonthlyManualUsd) + "/mo"),
         err ? h("div", { className: "vd-err" }, err) : null),
 
@@ -476,7 +490,14 @@
                 "net of every AI dollar. The x-factor is ROI% ÷ 100 + 1 " +
                 "(1,900% → 20x). When measured tokens exist, hours saved " +
                 "use the token→labor model: tokens × 0.75 words × " +
-                "1/600 words-per-hour × 35% utilization."))
+                "1/600 words-per-hour × 35% utilization, capped at the " +
+                "task's total hours. Supervision deduction, the per-token " +
+                "human-cost cross-check, and the FTE cap follow ",
+                h("a", { href: "https://meaningfultech.com/p/the-token-economy-what-a-100000-employee",
+                    target: "_blank", rel: "noreferrer",
+                    style: { color: "var(--color-primary, #14b8a6)" } },
+                  "The Token Economy"),
+                " — AI output someone must review isn't free labor."))
           : null)));
   }
 

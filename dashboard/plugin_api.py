@@ -94,6 +94,7 @@ class ParamsBody(BaseModel):
     implementationUsd: float | None = None
     taskLabel: str | None = None
     hoursBasis: str | None = None
+    supervisionPct: float | None = None
 
 
 @router.post("/params")
