@@ -42,6 +42,7 @@ def test_roi_matches_the_ai_saves_example(home):
         "employees": 5, "salaryMonthly": 5500, "hoursPerWeek": 30,
         "weeksPerMonth": 4, "automationPct": 65,
         "aiMonthlyManualUsd": 900, "implementationUsd": 3000,
+        "supervisionPct": 0,     # the site's formula has no review deduction
         "taskLabel": "Customer support", "source": "manual",
     }, measured_monthly_usd=0.0)
     steps = {s["n"]: s["value"] for s in out["steps"]}
@@ -197,8 +198,17 @@ def test_token_labor_model(home):
                       measured_tokens_monthly=1_000_000)
     assert out["hoursBasis"] == "tokens"
     step4 = [s for s in out["steps"] if s["n"] == 4][0]
-    assert step4["value"] == pytest.approx(437.5, abs=0.1)
+    # FTE cap: 437.5 raw hours bound by the task's 80 h/mo
+    assert step4["value"] == pytest.approx(80.0, abs=0.1)
+    assert out["tokenHoursCapped"] is True
     assert "tokens" in step4["formula"]
+    # uncapped: a smaller batch stays under the cap
+    small = roi.compute(params={**roi.DEFAULT_PARAMS,
+                                "aiMonthlyManualUsd": 500},
+                        measured_tokens_monthly=100_000)
+    s4 = [x for x in small["steps"] if x["n"] == 4][0]
+    assert s4["value"] == pytest.approx(43.75, abs=0.1)
+    assert small["tokenHoursCapped"] is False
     # explicit assumptions basis ignores tokens
     out2 = roi.compute(params={**roi.DEFAULT_PARAMS,
                                "hoursBasis": "assumptions",
