@@ -516,15 +516,7 @@
               h("span", { className: "vd-note" },
                 " — per-token human cost ($25–40/M adjusted), the " +
                 "verification burden behind the review deduction, and " +
-                "the agent-vs-human token asymmetry behind the FTE cap")),
-            (usage.providers || [])
-              .filter(function (p) { return p.docUrl; })
-              .map(function (p, i) {
-                return h("li", { key: "p" + i },
-                  h("a", { href: p.docUrl, target: "_blank",
-                      rel: "noreferrer" },
-                    p.provider + " — usage API documentation"));
-              })))));
+                "the agent-vs-human token asymmetry behind the FTE cap"))))));
   }
 
   // -------------------------------------------------------------------------
