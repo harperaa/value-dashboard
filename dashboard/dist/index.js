@@ -289,8 +289,7 @@
         : chip;
     });
 
-    return h("div", null,
-      h("div", { className: "vd-card" },
+    return h("div", { className: "vd-card" },
         h("div", { style: { display: "flex", alignItems: "center",
                             gap: 10, flexWrap: "wrap" } },
           h("div", { style: { fontWeight: 800, fontSize: 16, flex: 1 } },
@@ -339,16 +338,17 @@
             h("div", { className: "vd-stat-l" }, "hours automated / month"))),
         // every widget on this page follows the pattern: summary up top,
         // a Details toggle pinned to the widget's bottom edge
-        h("div", { style: { marginTop: 14, borderTop:
-            "1px solid var(--color-border, #2b2b44)", paddingTop: 10 } },
-          h("button", { className: "vd-btn", style: { fontSize: 12 },
-              onClick: toggleDetails },
+        h("div", { style: { marginTop: 12 } },
+          h("button", { onClick: toggleDetails,
+              style: { background: "none", border: "none", color: MUTED,
+                       cursor: "pointer", padding: 0, fontSize: 13,
+                       fontWeight: 700, fontFamily: "inherit" } },
             h("span", { className: "vd-chev" +
-                (showDetails ? " vd-chev-open" : "") }, "▸"),
-            " Details"))),
-
+                (showDetails ? " vd-chev-open" : ""),
+                style: { fontSize: 16, marginRight: 6 } }, "▸"),
+            "Details")),
       !showDetails ? null : h(React.Fragment, null,
-      h("div", { className: "vd-card" },
+      h("div", { className: "vd-section" },
         h("div", { className: "vd-h" }, "Measured usage by provider"),
         h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap",
                             alignItems: "center" } },
@@ -367,7 +367,7 @@
               "stays honest.")
           : null),
 
-      h("div", { className: "vd-card" },
+      h("div", { className: "vd-section" },
         h("div", { style: { display: "flex", alignItems: "center",
                             gap: 10, flexWrap: "wrap" } },
           h("div", { className: "vd-h", style: { margin: 0, flex: 1 } },
@@ -438,7 +438,7 @@
               fmtMoney(params.aiMonthlyManualUsd) + "/mo"),
         err ? h("div", { className: "vd-err" }, err) : null),
 
-      h("div", { className: "vd-card" },
+      h("div", { className: "vd-section" },
         h("div", { style: { cursor: "pointer", userSelect: "none",
                             fontWeight: 800 },
             onClick: function () { setShowSteps(!showSteps); } },

@@ -112,3 +112,6 @@
   position: fixed; inset: 0; z-index: 0; pointer-events: none;
   width: 100vw; height: 100vh;
 }
+
+/* inner sections of an expanded widget — same panel, quiet spacing */
+.vd-section { margin-top: 20px; }
