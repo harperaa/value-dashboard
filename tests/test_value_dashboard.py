@@ -182,6 +182,9 @@ def test_hermes_credential_pool_counts_as_connected(home, monkeypatch):
     # secrets never leak through
     assert "SECRET" not in _json.dumps(conns)
 
+    # hermes' token resolver reaches beyond HERMES_HOME — keep the test
+    # hermetic by stubbing the account-wide OAuth collector
+    monkeypatch.setattr(usage, "collect_anthropic_oauth", lambda: None)
     snap = usage.collect_all()
     states = {p["provider"]: p for p in snap["providers"]}
     assert states["Anthropic"]["state"] == "unsupported"
