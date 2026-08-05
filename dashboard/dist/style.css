@@ -115,3 +115,7 @@
 
 /* inner sections of an expanded widget — same panel, quiet spacing */
 .vd-section { margin-top: 20px; }
+
+.vd-sources { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.7; }
+.vd-sources a { color: var(--color-primary, #14b8a6);
+  text-decoration: underline; text-underline-offset: 3px; }

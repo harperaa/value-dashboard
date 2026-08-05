@@ -498,7 +498,33 @@
                     style: { color: "var(--color-primary, #14b8a6)" } },
                   "The Token Economy"),
                 " — AI output someone must review isn't free labor."))
-          : null)));
+          : null),
+
+        h("div", { className: "vd-section" },
+          h("div", { className: "vd-h" }, "Sources"),
+          h("ul", { className: "vd-sources" },
+            h("li", null,
+              h("a", { href: "https://www.ai-saves.com/en",
+                  target: "_blank", rel: "noreferrer" },
+                "AI Saves — AI ROI Calculator"),
+              h("span", { className: "vd-note" },
+                " — the 8-step savings methodology and automation medians")),
+            h("li", null,
+              h("a", { href: "https://meaningfultech.com/p/the-token-economy-what-a-100000-employee",
+                  target: "_blank", rel: "noreferrer" },
+                "The Token Economy (meaningfultech.com)"),
+              h("span", { className: "vd-note" },
+                " — per-token human cost ($25–40/M adjusted), the " +
+                "verification burden behind the review deduction, and " +
+                "the agent-vs-human token asymmetry behind the FTE cap")),
+            (usage.providers || [])
+              .filter(function (p) { return p.docUrl; })
+              .map(function (p, i) {
+                return h("li", { key: "p" + i },
+                  h("a", { href: p.docUrl, target: "_blank",
+                      rel: "noreferrer" },
+                    p.provider + " — usage API documentation"));
+              })))));
   }
 
   // -------------------------------------------------------------------------
