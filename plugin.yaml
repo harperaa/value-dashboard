@@ -1,0 +1,19 @@
+name: value-dashboard
+version: 1.0.0
+description: >
+  Dashboard — the mentee's metrics home, first in the sidebar. Launches with
+  the AI ROI widget: pulls real LLM usage from every connected provider that
+  exposes a usage API (OpenRouter, Anthropic admin, OpenAI admin), normalizes
+  it to a monthly AI cost, and runs the transparent 8-step ROI methodology
+  (ai-saves.com): team cost with payroll burden, hours, automation share,
+  net savings, payback, first-year ROI — shown as both a percentage and an
+  x-factor. Parameters derive from the AICVC Roadmap's Company Context via
+  the host LLM, with standard blended analysis/engineering/marketing rates
+  as the fallback.
+author: Allen Harper
+kind: standalone
+manifest_version: 1
+
+requires_env: []
+
+provides_tools: []

@@ -1,0 +1,14 @@
+{
+  "name": "value-dashboard",
+  "label": "Dashboard",
+  "description": "Metrics home — AI ROI from real provider usage, run through a transparent 8-step methodology",
+  "icon": "BarChart3",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/metrics",
+    "position": "after:kanban"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

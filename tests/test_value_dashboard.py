@@ -1,0 +1,159 @@
+"""value-dashboard tests — ROI math, x-factor, params, usage collectors."""
+from __future__ import annotations
+
+import importlib
+import importlib.util
+import sys
+from pathlib import Path
+
+import pytest
+
+PKG = "value_dashboard_test_pkg"
+ROOT = Path(__file__).resolve().parent.parent
+
+if PKG not in sys.modules:
+    spec = importlib.util.spec_from_file_location(
+        PKG, str(ROOT / "__init__.py"),
+        submodule_search_locations=[str(ROOT)])
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[PKG] = mod
+    spec.loader.exec_module(mod)
+
+store = importlib.import_module(f"{PKG}.store")
+usage = importlib.import_module(f"{PKG}.usage")
+roi = importlib.import_module(f"{PKG}.roi")
+
+
+@pytest.fixture()
+def home(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    for var in ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
+                "ANTHROPIC_ADMIN_KEY", "OPENAI_API_KEY", "OPENAI_ADMIN_KEY",
+                "XAI_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    return tmp_path
+
+
+def test_roi_matches_the_ai_saves_example(home):
+    """The calculator's own base scenario: 5 people x $5,500, 30 h/wk,
+    weeks 5 -> 600 h/mo at $60/h (team cost $35,750), 65% automation,
+    AI $900/mo, setup $3,000 -> Year-1 ROI 1,921%."""
+    out = roi.compute(params={
+        "employees": 5, "salaryMonthly": 5500, "hoursPerWeek": 30,
+        "weeksPerMonth": 4, "automationPct": 65,
+        "aiMonthlyManualUsd": 900, "implementationUsd": 3000,
+        "taskLabel": "Customer support", "source": "manual",
+    }, measured_monthly_usd=0.0)
+    steps = {s["n"]: s["value"] for s in out["steps"]}
+    assert steps[1] == 35750.0                    # 5 x 5500 x 1.3
+    assert steps[2] == 600.0                      # 5 x 30 x 4
+    assert steps[3] == pytest.approx(59.58, abs=0.01)
+    assert steps[4] == 390.0                      # 600 x 65%
+    assert steps[5] == pytest.approx(23237.5, abs=1)   # site shows $23,238
+    assert steps[6] == pytest.approx(22337.5, abs=1)
+    assert out["roiPct"] == pytest.approx(1921, abs=10)  # site: 1,921%
+    # x-factor conversion: 1,900% -> 20x
+    assert out["xFactor"] == pytest.approx(out["roiPct"] / 100 + 1, abs=0.1)
+
+
+def test_x_factor_examples(home):
+    out = roi.compute(params={**roi.DEFAULT_PARAMS,
+                              "aiMonthlyManualUsd": 100},
+                      measured_monthly_usd=0.0)
+    assert out["xFactor"] == pytest.approx(out["roiPct"] / 100 + 1, abs=0.1)
+
+
+def test_roi_without_ai_cost_returns_note_not_infinity(home):
+    out = roi.compute(params={**roi.DEFAULT_PARAMS,
+                              "aiMonthlyManualUsd": 0,
+                              "implementationUsd": 0},
+                      measured_monthly_usd=0.0)
+    assert out["roiPct"] is None and out["xFactor"] is None
+    assert "manual monthly spend" in out["roiNote"]
+
+
+def test_params_clamped_and_persisted(home):
+    p = roi.save_params({"employees": 0, "automationPct": 99,
+                         "hoursPerWeek": 200, "salaryMonthly": -5})
+    assert p["employees"] == 1
+    assert p["automationPct"] == 85.0
+    assert p["hoursPerWeek"] == 80.0
+    assert p["salaryMonthly"] == 0.0
+    assert roi.get_params()["automationPct"] == 85.0
+
+
+def test_blended_rate_is_documented_mean(home):
+    assert roi.BLENDED_RATE == pytest.approx(
+        (75 + 95 + 60) / 3, abs=0.01)
+    # the default salary lands back on the blended loaded rate at 160 h
+    loaded = roi.DEFAULT_PARAMS["salaryMonthly"] * 1.3 / 160
+    assert loaded == pytest.approx(roi.BLENDED_RATE, abs=0.5)
+
+
+def test_openrouter_collector_normalizes(home, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+
+    def fake_get(url, headers, timeout=30):
+        assert "openrouter.ai/api/v1/auth/key" in url
+        assert headers["Authorization"] == "Bearer or-key"
+        return {"data": {"usage": 42.5, "limit": None}}
+
+    monkeypatch.setattr(usage, "_get_json", fake_get)
+    out = usage.collect_openrouter()
+    assert out["state"] == "ok" and out["costUsd"] == 42.5
+
+
+def test_collect_all_states_and_snapshot(home, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.setenv("XAI_API_KEY", "x")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "a")   # non-admin -> unsupported
+
+    def fake_get(url, headers, timeout=30):
+        return {"data": {"usage": 10.0}}
+
+    monkeypatch.setattr(usage, "_get_json", fake_get)
+    snap = usage.collect_all()
+    states = {p["provider"]: p["state"] for p in snap["providers"]}
+    assert states["OpenRouter"] == "ok"
+    assert states["xAI / Grok"] == "unsupported"
+    assert states["Anthropic"] == "unsupported"
+    assert "Gemini" not in states                  # no key -> hidden
+    assert snap["measuredMonthlyUsd"] == 10.0
+    assert store.kv_get("usageSnapshot")["measuredMonthlyUsd"] == 10.0
+
+
+def test_derive_params_defaults_without_context(home):
+    p = roi.derive_params()
+    assert p["source"] == "defaults"
+    assert "blended" in p["derivedNote"].lower() or \
+        "Company Context" in p["derivedNote"]
+
+
+def test_derive_params_from_context(home, monkeypatch):
+    ctx_dir = home / "plugins-data" / "ai-cyber-value-creator"
+    ctx_dir.mkdir(parents=True)
+    (ctx_dir / "company-context.md").write_text(
+        "# Company\nSolo consultant, AI security audits, ~25 h/wk billable.")
+
+    class FakeRes:
+        parsed = {"employees": 1, "salaryMonthly": 12000,
+                  "hoursPerWeek": 25, "automationPct": 50,
+                  "taskLabel": "AI security audits",
+                  "note": "solo consultant at premium rates"}
+
+    class FakeLlm:
+        def complete_structured(self, **kw):
+            return FakeRes()
+
+    import types
+    fake_mod = types.ModuleType("agent.plugin_llm")
+    fake_mod.PluginLlm = lambda plugin_id: FakeLlm()
+    fake_agent = types.ModuleType("agent")
+    fake_agent.plugin_llm = fake_mod
+    monkeypatch.setitem(sys.modules, "agent", fake_agent)
+    monkeypatch.setitem(sys.modules, "agent.plugin_llm", fake_mod)
+
+    p = roi.derive_params()
+    assert p["source"] == "company-context"
+    assert p["salaryMonthly"] == 12000
+    assert p["taskLabel"] == "AI security audits"
