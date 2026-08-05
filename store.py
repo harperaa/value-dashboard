@@ -83,3 +83,38 @@ def get_key(env_var: str) -> str:
     except OSError:
         pass
     return ""
+
+
+_PROVIDER_LABELS = {
+    "anthropic": "Anthropic", "openai": "OpenAI", "xai": "xAI / Grok",
+    "xai-oauth": "xAI / Grok", "gemini": "Gemini", "google": "Gemini",
+    "deepseek": "DeepSeek", "openrouter": "OpenRouter",
+    "copilot": "GitHub Copilot", "groq": "Groq", "mistral": "Mistral",
+    "nous": "Nous Portal",
+}
+
+
+def connected_providers() -> list[dict]:
+    """LLM credentials hermes itself holds (auth.json credential_pool) —
+    OAuth logins and pool-stored API keys alike. Names and auth types only,
+    never secrets."""
+    out = []
+    try:
+        d = json.loads((_home() / "auth.json").read_text())
+        pool = d.get("credential_pool") or {}
+        for prov, entries in pool.items():
+            entries = [e for e in (entries or []) if isinstance(e, dict)]
+            if not entries:
+                continue
+            kinds = sorted({str(e.get("auth_type") or "").strip()
+                            for e in entries if e.get("auth_type")})
+            out.append({
+                "provider": prov,
+                "label": _PROVIDER_LABELS.get(
+                    prov, _PROVIDER_LABELS.get(
+                        prov.replace("-oauth", ""), prov)),
+                "authTypes": kinds or ["unknown"],
+            })
+    except Exception:
+        pass
+    return out

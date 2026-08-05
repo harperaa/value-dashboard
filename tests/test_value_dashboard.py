@@ -157,3 +157,33 @@ def test_derive_params_from_context(home, monkeypatch):
     assert p["source"] == "company-context"
     assert p["salaryMonthly"] == 12000
     assert p["taskLabel"] == "AI security audits"
+
+
+def test_hermes_credential_pool_counts_as_connected(home, monkeypatch):
+    import json as _json
+    (home / "auth.json").write_text(_json.dumps({
+        "version": 1,
+        "credential_pool": {
+            "anthropic": [{"id": "c1", "auth_type": "api_key",
+                           "label": "work key", "priority": 1}],
+            "xai-oauth": [{"id": "c2", "auth_type": "oauth",
+                           "label": "grok login", "priority": 1,
+                           "access_token": "SECRET"}],
+            "empty-provider": [],
+        },
+    }))
+    conns = store.connected_providers()
+    by = {c["provider"]: c for c in conns}
+    assert by["anthropic"]["label"] == "Anthropic"
+    assert by["anthropic"]["authTypes"] == ["api_key"]
+    assert by["xai-oauth"]["label"] == "xAI / Grok"
+    assert "empty-provider" not in by
+    # secrets never leak through
+    assert "SECRET" not in _json.dumps(conns)
+
+    snap = usage.collect_all()
+    states = {p["provider"]: p for p in snap["providers"]}
+    assert states["Anthropic"]["state"] == "unsupported"
+    assert "connected in hermes (api_key)" in states["Anthropic"]["note"]
+    assert states["xAI / Grok"]["state"] == "unsupported"
+    assert "oauth" in states["xAI / Grok"]["note"]

@@ -132,6 +132,27 @@ def collect_all() -> dict:
         _console_only("DeepSeek", "DEEPSEEK_API_KEY",
                       "platform.deepseek.com"),
     ]
+    # merge in providers hermes itself holds credentials for (OAuth logins
+    # and pool-stored keys in auth.json) — env-var scanning alone misses
+    # them entirely
+    by_label = {r["provider"]: r for r in results}
+    for cp in store.connected_providers():
+        label = cp["label"]
+        auth = "/".join(cp["authTypes"])
+        existing = by_label.get(label)
+        note = (f"connected in hermes ({auth})" +
+                (" — usage reports need an admin key; use the manual "
+                 "override" if label in ("Anthropic", "OpenAI")
+                 else " — no usage API for this credential; use the "
+                      "manual override"))
+        if existing is None:
+            entry = {"provider": label, "state": "unsupported", "note": note}
+            results.append(entry)
+            by_label[label] = entry
+        elif existing["state"] == "nokey":
+            existing["state"] = "unsupported"
+            existing["note"] = note
+
     visible = [r for r in results if r["state"] != "nokey"]
     measured = sum(r.get("costUsd") or 0.0 for r in visible
                    if r["state"] == "ok")
