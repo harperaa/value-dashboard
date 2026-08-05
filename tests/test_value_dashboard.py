@@ -272,3 +272,40 @@ def test_token_economy_concepts(home):
     # supervision clamps 0-50
     p = roi.save_params({"supervisionPct": 99})
     assert p["supervisionPct"] == 50.0
+
+
+def test_local_ledger_derives_cost_and_produced_tokens(home):
+    import sqlite3, time as _t
+    conn = sqlite3.connect(home / "state.db")
+    conn.execute("""CREATE TABLE session_model_usage (
+        session_id TEXT, model TEXT, billing_provider TEXT,
+        billing_base_url TEXT, billing_mode TEXT, task TEXT,
+        api_call_count INT, input_tokens INT, output_tokens INT,
+        cache_read_tokens INT, cache_write_tokens INT,
+        reasoning_tokens INT, estimated_cost_usd REAL,
+        actual_cost_usd REAL, cost_status TEXT, cost_source TEXT,
+        first_seen REAL, last_seen REAL)""")
+    now = _t.time()
+    conn.execute("INSERT INTO session_model_usage VALUES "
+                 "('s1','grok-4.5','xai-oauth','','','',100,1000000,200000,"
+                 "5000000,0,50000,0,0,'unknown','none',?,?)", (now, now))
+    conn.execute("INSERT INTO session_model_usage VALUES "
+                 "('s2','grok-4.5','xai-oauth','','','',5,50000,10000,"
+                 "0,0,0,0,0,'unknown','none',?,?)",
+                 (now - 90 * 86400, now - 90 * 86400))   # outside window
+    conn.commit()
+    conn.close()
+
+    entries = usage.collect_local_ledger()
+    assert len(entries) == 1
+    e = entries[0]
+    assert e["provider"] == "xAI / Grok" and e["state"] == "ok"
+    # produced tokens = output + reasoning only (cache reads excluded)
+    assert e["tokens"] == 250000
+    # static grok pricing: 1M x $3 + 250K x $15 + 5M x $0.30 = $8.25
+    assert e["costUsd"] == pytest.approx(8.25, abs=0.05)
+    assert e["models"][0]["costSource"] == "API-equivalent pricing"
+
+    snap = usage.collect_all()
+    assert snap["measuredTokensMonthly"] >= 250000
+    assert any(m["model"] == "grok-4.5" for m in snap["ledgerModels"])

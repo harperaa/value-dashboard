@@ -373,9 +373,34 @@
             busy === "/refresh" ? "Checking…" : "⟳ Refresh usage")),
         (usage.unsupportedCount || 0) > 0
           ? h("div", { className: "vd-note", style: { marginTop: 8 } },
-              "◌ providers have no usage API — check their console and put " +
-              "the monthly figure into “manual AI spend” below so the ROI " +
-              "stays honest.")
+              "◌ providers need an extra key for account-wide usage (chip " +
+              "tooltip says which) — until then the instance ledger and " +
+              "the manual override keep the ROI honest.")
+          : null,
+        (usage.ledgerModels || []).length
+          ? h("div", { style: { marginTop: 12 } },
+              h("div", { className: "vd-h" },
+                "This instance's request ledger — by model"),
+              h("table", { className: "vd-steps" },
+                h("tbody", null,
+                  (usage.ledgerModels || []).map(function (m, i) {
+                    return h("tr", { key: i },
+                      h("td", null, m.model),
+                      h("td", null,
+                        m.calls + " calls",
+                        h("div", { className: "vd-formula" },
+                          Number(m.inputTokens).toLocaleString() + " in · " +
+                          Number(m.outputTokens).toLocaleString() + " out · " +
+                          Number(m.reasoningTokens).toLocaleString() +
+                          " reasoning · " +
+                          Number(m.cacheReadTokens).toLocaleString() +
+                          " cache reads")),
+                      h("td", { className: "vd-val" },
+                        (m.derivedCostUsd != null
+                          ? fmtMoney(m.derivedCostUsd) : "—"),
+                        h("div", { className: "vd-formula" },
+                          m.costSource || "")));
+                  }))))
           : null),
 
       h("div", { className: "vd-section" },

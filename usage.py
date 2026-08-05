@@ -306,6 +306,152 @@ def collect_deepseek() -> dict:
                 "error": str(exc)[:150], "docUrl": DOCS["deepseek"]}
 
 
+# ---------------------------------------------------------------------------
+# The local ledger — hermes records every request's tokens per model in
+# ~/.hermes/state.db (session_model_usage). This is the ground truth for
+# OAuth/subscription credentials no provider API will report on. Cost is
+# DERIVED: hermes' own pricing machinery when available, else a static
+# per-model table (API-equivalent pricing; subscription billing already
+# covered it — the derived figure prices what the same usage would cost).
+# ---------------------------------------------------------------------------
+
+# fallback $/M tokens (input, output) when agent.usage_pricing is absent
+_STATIC_PRICING = {
+    "grok-4.5": (3.0, 15.0), "grok-4": (3.0, 15.0), "grok-3": (3.0, 15.0),
+    "claude-opus": (15.0, 75.0), "claude-sonnet": (3.0, 15.0),
+    "claude-haiku": (0.80, 4.0), "gpt-5": (1.25, 10.0),
+    "gpt-4o": (2.50, 10.0), "gemini-2.5-pro": (1.25, 10.0),
+    "gemini-2.5-flash": (0.30, 2.50), "deepseek": (0.27, 1.10),
+}
+_CACHE_READ_DISCOUNT = 0.10       # cached input bills ~10% of input rate
+
+
+def _derive_cost(model: str, provider: str, in_t: int, out_t: int,
+                 cache_r: int, cache_w: int, reason_t: int):
+    """(usd, source) — hermes pricing first, static table fallback."""
+    try:
+        from agent.usage_pricing import CanonicalUsage, estimate_usage_cost
+        usage_obj = CanonicalUsage(
+            input_tokens=in_t, output_tokens=out_t,
+            cache_read_tokens=cache_r, cache_write_tokens=cache_w,
+            reasoning_tokens=reason_t)
+        for prov in (provider, provider.replace("-oauth", ""), None):
+            try:
+                cost = estimate_usage_cost(model, usage_obj, provider=prov)
+                if cost.amount_usd is not None and float(cost.amount_usd) > 0:
+                    return float(cost.amount_usd), "hermes pricing"
+            except Exception:  # noqa: BLE001
+                continue
+    except Exception:  # noqa: BLE001
+        pass
+    key = model.lower()
+    rates = None
+    for prefix, r in _STATIC_PRICING.items():
+        if key.startswith(prefix):
+            rates = r
+            break
+    if not rates:
+        return None, None
+    usd = (in_t * rates[0] + (out_t + reason_t) * rates[1]
+           + cache_r * rates[0] * _CACHE_READ_DISCOUNT) / 1e6
+    return round(usd, 2), "API-equivalent pricing"
+
+
+def collect_anthropic_oauth() -> dict | None:
+    """Account-wide Anthropic usage for OAuth (Claude subscription)
+    credentials, via hermes' own account-usage helper — covers ALL usage
+    on the account (Claude Code, other instances), not just this one."""
+    try:
+        from agent.account_usage import fetch_account_usage
+        snap = fetch_account_usage("anthropic")
+    except Exception:  # noqa: BLE001
+        return None
+    if snap is None or getattr(snap, "unavailable_reason", None):
+        return None
+    windows = list(getattr(snap, "windows", ()) or ())
+    if not windows:
+        return None
+    parts = [f"{w.label} {w.used_percent:.0f}%" for w in windows]
+    used_credits = 0.0
+    for d in getattr(snap, "details", ()) or ():
+        # "Extra usage: 12.34 / 50.00 USD"
+        try:
+            used_credits = float(str(d).split(":")[1].split("/")[0])
+        except (IndexError, ValueError):
+            pass
+    return {"provider": "Anthropic", "state": "ok",
+            "costUsd": round(used_credits, 2),
+            "period": "account-wide (OAuth)",
+            "note": "whole-account subscription utilization — " +
+                    " · ".join(parts) +
+                    " — plan usage is prepaid; costUsd counts only "
+                    "extra-usage credits",
+            "docUrl": DOCS["anthropic"]}
+
+
+def collect_local_ledger(days: int = 30) -> list[dict]:
+    """Per-provider aggregates from the instance's own request ledger."""
+    import sqlite3
+    db = store._home() / "state.db"
+    if not db.exists():
+        return []
+    cutoff = time.time() - days * 86400
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        rows = conn.execute(
+            "SELECT COALESCE(billing_provider,'unknown'), model, "
+            "SUM(api_call_count), SUM(input_tokens), SUM(output_tokens), "
+            "SUM(cache_read_tokens), SUM(cache_write_tokens), "
+            "SUM(reasoning_tokens), SUM(estimated_cost_usd), "
+            "SUM(actual_cost_usd) FROM session_model_usage "
+            "WHERE last_seen >= ? GROUP BY billing_provider, model",
+            (cutoff,)).fetchall()
+        conn.close()
+    except Exception:  # noqa: BLE001
+        return []
+
+    by_provider: dict[str, dict] = {}
+    for (prov, model, calls, in_t, out_t, cache_r, cache_w, reason_t,
+         est, actual) in rows:
+        in_t, out_t = int(in_t or 0), int(out_t or 0)
+        cache_r, cache_w = int(cache_r or 0), int(cache_w or 0)
+        reason_t = int(reason_t or 0)
+        if not (in_t or out_t or reason_t):
+            continue
+        usd = None
+        source = None
+        if actual and float(actual) > 0:
+            usd, source = float(actual), "provider-reported"
+        elif est and float(est) > 0:
+            usd, source = float(est), "hermes estimate"
+        else:
+            usd, source = _derive_cost(str(model or "unknown"), str(prov),
+                                       in_t, out_t, cache_r, cache_w,
+                                       reason_t)
+        label = store._PROVIDER_LABELS.get(
+            str(prov), store._PROVIDER_LABELS.get(
+                str(prov).replace("-oauth", ""), str(prov)))
+        agg = by_provider.setdefault(label, {
+            "provider": label, "state": "ok", "costUsd": 0.0,
+            "tokens": 0, "period": f"last {days} days",
+            "note": "measured from this instance's own request ledger "
+                    "(state.db); cost derived from model pricing. "
+                    "Account-wide numbers need the provider's usage API "
+                    "key (see the assumptions note)",
+            "ledger": True, "models": []})
+        agg["models"].append({
+            "model": str(model or "unknown"), "calls": int(calls or 0),
+            "inputTokens": in_t, "outputTokens": out_t,
+            "reasoningTokens": reason_t, "cacheReadTokens": cache_r,
+            "derivedCostUsd": usd, "costSource": source})
+        if usd:
+            agg["costUsd"] = round(agg["costUsd"] + usd, 2)
+        # labor model counts PRODUCED tokens (output + reasoning) — cache
+        # reads would inflate it 50x
+        agg["tokens"] += out_t + reason_t
+    return list(by_provider.values())
+
+
 def collect_all() -> dict:
     """Run every collector; normalize monthly AI cost + measured tokens."""
     results = [
@@ -317,6 +463,27 @@ def collect_all() -> dict:
         collect_gemini(),
         collect_deepseek(),
     ]
+    # account-wide OAuth usage (whole key/account, beyond this instance)
+    oauth_anthropic = collect_anthropic_oauth()
+    if oauth_anthropic:
+        results = [r for r in results if r["provider"] != "Anthropic"
+                   or r["state"] == "ok"]
+        if not any(r["provider"] == "Anthropic" and r["state"] == "ok"
+                   for r in results):
+            results.append(oauth_anthropic)
+
+    # the instance's own ledger covers OAuth/subscription credentials no
+    # provider API reports on — API-reported numbers win to avoid double
+    # counting
+    api_ok = {r["provider"] for r in results if r["state"] == "ok"}
+    for entry in collect_local_ledger():
+        if entry["provider"] in api_ok:
+            continue
+        results = [r for r in results
+                   if not (r["provider"] == entry["provider"]
+                           and r["state"] != "ok")]
+        results.append(entry)
+
     # merge in providers hermes itself holds credentials for (OAuth logins
     # and pool-stored keys in auth.json) — env-var scanning alone misses
     # them entirely
@@ -358,9 +525,15 @@ def collect_all() -> dict:
                    if r["state"] == "ok")
     tokens = sum(int(r.get("tokens") or 0) for r in visible
                  if r["state"] == "ok")
+    ledger_models = []
+    for r in visible:
+        if r.get("ledger"):
+            for m in r.get("models") or []:
+                ledger_models.append({**m, "provider": r["provider"]})
     snapshot = {
         "at": time.time(),
         "providers": visible,
+        "ledgerModels": ledger_models,
         "measuredMonthlyUsd": round(measured, 2),
         "measuredTokensMonthly": tokens,
         "unsupportedCount": sum(1 for r in visible
