@@ -336,13 +336,17 @@
           h("div", { className: "vd-stat" },
             h("div", { className: "vd-stat-n" },
               (roi.steps && roi.steps[3] ? roi.steps[3].value : 0) + " h"),
-            h("div", { className: "vd-stat-l" }, "hours automated / month")))),
+            h("div", { className: "vd-stat-l" }, "hours automated / month"))),
+        // every widget on this page follows the pattern: summary up top,
+        // a Details toggle pinned to the widget's bottom edge
+        h("div", { style: { marginTop: 14, borderTop:
+            "1px solid var(--color-border, #2b2b44)", paddingTop: 10 } },
+          h("button", { className: "vd-btn", style: { fontSize: 12 },
+              onClick: toggleDetails },
+            h("span", { className: "vd-chev" +
+                (showDetails ? " vd-chev-open" : "") }, "▸"),
+            " Details"))),
 
-      h("div", { style: { margin: "2px 0 14px" } },
-        h("button", { className: "vd-btn", onClick: toggleDetails },
-          h("span", { className: "vd-chev" +
-              (showDetails ? " vd-chev-open" : "") }, "▸"),
-          " Details")),
       !showDetails ? null : h(React.Fragment, null,
       h("div", { className: "vd-card" },
         h("div", { className: "vd-h" }, "Measured usage by provider"),
