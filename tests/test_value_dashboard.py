@@ -187,3 +187,49 @@ def test_hermes_credential_pool_counts_as_connected(home, monkeypatch):
     assert "connected in hermes (api_key)" in states["Anthropic"]["note"]
     assert states["xAI / Grok"]["state"] == "unsupported"
     assert "oauth" in states["xAI / Grok"]["note"]
+
+
+def test_token_labor_model(home):
+    # 1M output-ish tokens -> 0.75M words -> 1250 h raw -> 437.5 h at 35%
+    assert roi.token_hours(1_000_000) == pytest.approx(437.5, abs=0.1)
+    out = roi.compute(params={**roi.DEFAULT_PARAMS,
+                              "aiMonthlyManualUsd": 500},
+                      measured_tokens_monthly=1_000_000)
+    assert out["hoursBasis"] == "tokens"
+    step4 = [s for s in out["steps"] if s["n"] == 4][0]
+    assert step4["value"] == pytest.approx(437.5, abs=0.1)
+    assert "tokens" in step4["formula"]
+    # explicit assumptions basis ignores tokens
+    out2 = roi.compute(params={**roi.DEFAULT_PARAMS,
+                               "hoursBasis": "assumptions",
+                               "aiMonthlyManualUsd": 500},
+                       measured_tokens_monthly=1_000_000)
+    assert out2["hoursBasis"] == "assumptions"
+    assert out2["assumptionHoursMonthly"] == 80.0 * 0.55
+
+
+def test_anthropic_cost_is_cents(home, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_ADMIN_KEY", "sk-ant-admin01-x")
+
+    def fake_get(url, headers, timeout=30):
+        if "cost_report" in url:
+            return {"data": [{"results": [{"amount": 12345.0}]}]}
+        return {"data": [{"results": [
+            {"uncached_input_tokens": 1000, "output_tokens": 500}]}]}
+
+    monkeypatch.setattr(usage, "_get_json", fake_get)
+    out = usage.collect_anthropic()
+    assert out["state"] == "ok"
+    assert out["costUsd"] == 123.45          # cents -> dollars
+    assert out["tokens"] == 1500
+
+
+def test_proven_unsupported_carry_doc_links(home, monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "g")
+    monkeypatch.setenv("XAI_API_KEY", "x")   # api key alone: unsupported
+    g = usage.collect_gemini()
+    assert g["state"] == "unsupported" and "PROVEN" in g["note"]
+    assert g["docUrl"].startswith("https://ai.google.dev")
+    x = usage.collect_xai()
+    assert x["state"] == "unsupported" and "Management" in x["note"]
+    assert x["docUrl"].startswith("https://docs.x.ai")

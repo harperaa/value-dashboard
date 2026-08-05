@@ -217,6 +217,18 @@
     var err = errSt[0], setErr = errSt[1];
     var stepsSt = useState(false);
     var showSteps = stepsSt[0], setShowSteps = stepsSt[1];
+    var detSt = useState(function () {
+      try { return localStorage.getItem("vd-details") === "1"; }
+      catch (e) { return false; }
+    });
+    var showDetails = detSt[0], setShowDetails = detSt[1];
+    function toggleDetails() {
+      setShowDetails(function (v) {
+        try { localStorage.setItem("vd-details", v ? "0" : "1"); }
+        catch (e) {}
+        return !v;
+      });
+    }
     var editSt = useState(null);      // draft params while editing
     var draft = editSt[0], setDraft = editSt[1];
 
@@ -252,15 +264,29 @@
         }));
     }
 
+    function fmtTok(n) {
+      n = Number(n) || 0;
+      if (n >= 1e9) return (n / 1e9).toFixed(1) + "B";
+      if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+      if (n >= 1e3) return (n / 1e3).toFixed(0) + "K";
+      return String(n);
+    }
     var provChips = (usage.providers || []).map(function (p, i) {
       var cls = p.state === "ok" ? "vd-prov-ok"
         : p.state === "error" ? "vd-prov-err" : "vd-prov-warn";
       var label = p.provider +
-        (p.state === "ok" ? " " + fmtMoney(p.costUsd) : "");
-      return h("span", { key: i, className: "vd-prov " + cls,
-          title: p.note || p.error || p.period || "" },
+        (p.state === "ok" ? " " + fmtMoney(p.costUsd) +
+          (p.tokens ? " · " + fmtTok(p.tokens) + " tok" : "") : "");
+      var chip = h("span", { key: i, className: "vd-prov " + cls,
+          title: (p.note || p.error || p.period || "") +
+            (p.docUrl ? " — click for the provider's usage-API docs"
+                      : "") },
         (p.state === "ok" ? "✓ " : p.state === "error" ? "✕ " : "◌ ") +
         label);
+      return p.docUrl
+        ? h("a", { key: i, href: p.docUrl, target: "_blank",
+            rel: "noreferrer", style: { textDecoration: "none" } }, chip)
+        : chip;
     });
 
     return h("div", null,
@@ -284,6 +310,13 @@
                 fmtMoney(roi.xFactor) + " of value"))
           : h("div", { className: "vd-note", style: { fontSize: 13.5 } },
               roi.roiNote || "Not enough data yet."),
+        roi.hoursBasis === "tokens"
+          ? h("div", { className: "vd-note", style: { marginTop: 6 } },
+              "labor saved is measured from real token usage: " +
+              Number(roi.measuredTokensMonthly).toLocaleString() +
+              " tokens ≈ " + roi.tokenHoursMonthly + " h of human-equivalent " +
+              "output this period")
+          : null,
         h("div", { className: "vd-stats" },
           h("div", { className: "vd-stat" },
             h("div", { className: "vd-stat-n" },
@@ -305,6 +338,12 @@
               (roi.steps && roi.steps[3] ? roi.steps[3].value : 0) + " h"),
             h("div", { className: "vd-stat-l" }, "hours automated / month")))),
 
+      h("div", { style: { margin: "2px 0 14px" } },
+        h("button", { className: "vd-btn", onClick: toggleDetails },
+          h("span", { className: "vd-chev" +
+              (showDetails ? " vd-chev-open" : "") }, "▸"),
+          " Details")),
+      !showDetails ? null : h(React.Fragment, null,
       h("div", { className: "vd-card" },
         h("div", { className: "vd-h" }, "Measured usage by provider"),
         h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap",
@@ -349,6 +388,7 @@
             : h("button", { className: "vd-btn",
                 onClick: function () {
                   setDraft({
+                    hoursBasis: params.hoursBasis || "auto",
                     employees: params.employees,
                     salaryMonthly: params.salaryMonthly,
                     hoursPerWeek: params.hoursPerWeek,
@@ -370,7 +410,22 @@
               field("weeks/mo", "weeksPerMonth", 0.1),
               field("automation %", "automationPct", 5),
               field("manual AI spend $/mo", "aiMonthlyManualUsd", 10),
-              field("implementation $", "implementationUsd", 100))
+              field("implementation $", "implementationUsd", 100),
+              h("div", { className: "vd-field" },
+                h("label", null, "hours basis"),
+                h("select", {
+                  className: "vd-input",
+                  value: draft.hoursBasis || "auto",
+                  onChange: function (e) {
+                    var v = e.target.value;
+                    setDraft(function (d) {
+                      return Object.assign({}, d, { hoursBasis: v });
+                    });
+                  },
+                },
+                  h("option", { value: "auto" }, "auto (tokens if measured)"),
+                  h("option", { value: "assumptions" }, "assumptions"),
+                  h("option", { value: "tokens" }, "measured tokens"))))
           : h("div", { className: "vd-note", style: { marginTop: 6 } },
               params.employees + " person(s) · " +
               fmtMoney(params.salaryMonthly) + "/mo gross · " +
@@ -415,8 +470,10 @@
                   "ai-saves.com"),
                 " — conservative automation medians, payroll burden x1.3, " +
                 "net of every AI dollar. The x-factor is ROI% ÷ 100 + 1 " +
-                "(1,900% → 20x)."))
-          : null));
+                "(1,900% → 20x). When measured tokens exist, hours saved " +
+                "use the token→labor model: tokens × 0.75 words × " +
+                "1/600 words-per-hour × 35% utilization."))
+          : null)));
   }
 
   // -------------------------------------------------------------------------

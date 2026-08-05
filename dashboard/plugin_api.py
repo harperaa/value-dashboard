@@ -51,9 +51,11 @@ router = APIRouter()
 def _public_state() -> dict:
     snapshot = store.kv_get("usageSnapshot") or {}
     measured = float(snapshot.get("measuredMonthlyUsd") or 0.0)
+    tokens = int(snapshot.get("measuredTokensMonthly") or 0)
     return {
         "usage": snapshot,
-        "roi": roi.compute(measured_monthly_usd=measured),
+        "roi": roi.compute(measured_monthly_usd=measured,
+                           measured_tokens_monthly=tokens),
         "keys": store.env_keys(),
         "hasCompanyContext": bool(roi._company_context_text().strip()),
     }
@@ -91,6 +93,7 @@ class ParamsBody(BaseModel):
     aiMonthlyManualUsd: float | None = None
     implementationUsd: float | None = None
     taskLabel: str | None = None
+    hoursBasis: str | None = None
 
 
 @router.post("/params")

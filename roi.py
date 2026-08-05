@@ -38,6 +38,14 @@ logger = logging.getLogger(__name__)
 PLUGIN_ID = "value-dashboard"
 
 STANDARD_RATES = {"analysis": 75.0, "engineering": 95.0, "marketing": 60.0}
+# Token -> labor model (used when measured token counts exist):
+# LLM output tokens ~0.75 words each; a human produces polished
+# analysis/engineering/marketing work at ~600 words/hour; and only a
+# conservative share of generated tokens actually displaces human work
+# (drafts, retries, and thinking tokens don't count) — 35%.
+WORDS_PER_TOKEN = 0.75
+HUMAN_WORDS_PER_HOUR = 600.0
+TOKEN_UTILIZATION = 0.35
 BLENDED_RATE = round(sum(STANDARD_RATES.values()) / len(STANDARD_RATES), 2)
 PAYROLL_BURDEN = 1.30
 # ai-saves.com automation medians by task type
@@ -56,6 +64,7 @@ DEFAULT_PARAMS = {
     "aiMonthlyManualUsd": 0,      # adds to measured provider usage
     "implementationUsd": 0,       # mentees build inside the platform
     "taskLabel": "AI-assisted business building (blended)",
+    "hoursBasis": "auto",         # auto | assumptions | tokens
     "source": "defaults",
 }
 
@@ -82,16 +91,27 @@ def save_params(updates: dict) -> dict:
             p[k] = min(5.0, max(1.0, float(v)))
         elif k in ("automationPct",):
             p[k] = min(85.0, max(5.0, float(v)))
+        elif k in ("hoursBasis",):
+            p[k] = v if v in ("auto", "assumptions", "tokens") else "auto"
         elif k in ("taskLabel", "source", "derivedNote"):
             p[k] = str(v)[:300]
     store.kv_set("roiParams", p)
     return p
 
 
+def token_hours(tokens_monthly: int) -> float:
+    """Measured tokens -> human-equivalent hours of produced work."""
+    return (tokens_monthly * WORDS_PER_TOKEN / HUMAN_WORDS_PER_HOUR
+            * TOKEN_UTILIZATION)
+
+
 def compute(params: Optional[dict] = None,
-            measured_monthly_usd: float = 0.0) -> dict:
+            measured_monthly_usd: float = 0.0,
+            measured_tokens_monthly: int = 0) -> dict:
     """Run the 8 steps; every intermediate is returned for the
-    step-by-step panel."""
+    step-by-step panel. When measured tokens exist (hoursBasis auto or
+    tokens), automated hours come from the token->labor model instead of
+    the hours x automation%% assumption."""
     p = params or get_params()
     employees = max(1, int(p["employees"]))
     salary = float(p["salaryMonthly"])
@@ -105,7 +125,12 @@ def compute(params: Optional[dict] = None,
     team_cost = employees * salary * PAYROLL_BURDEN                  # 1
     hours_month = employees * hpw * wpm                              # 2
     hourly_rate = team_cost / hours_month if hours_month else 0.0    # 3
-    automated_hours = hours_month * auto                             # 4
+    tok_hours = token_hours(int(measured_tokens_monthly or 0))
+    basis = p.get("hoursBasis", "auto")
+    use_tokens = (basis == "tokens"
+                  or (basis == "auto" and tok_hours > 0))
+    assumption_hours = hours_month * auto
+    automated_hours = tok_hours if use_tokens else assumption_hours  # 4
     gross_monthly = automated_hours * hourly_rate                    # 5
     net_monthly = gross_monthly - ai_monthly                         # 6
     payback_months = (impl / net_monthly) if net_monthly > 0 else None  # 7
@@ -127,8 +152,16 @@ def compute(params: Optional[dict] = None,
             {"n": 3, "label": "Effective hourly rate",
              "formula": "step 1 / step 2",
              "value": round(hourly_rate, 2), "unit": "$/h"},
-            {"n": 4, "label": f"Automated hours ({auto * 100:.0f}%)",
-             "formula": f"step 2 x {auto * 100:.0f}%",
+            {"n": 4,
+             "label": ("Automated hours (from measured tokens)"
+                       if use_tokens else
+                       f"Automated hours ({auto * 100:.0f}%)"),
+             "formula": (f"{int(measured_tokens_monthly):,} tokens x "
+                         f"{WORDS_PER_TOKEN} words x 1/"
+                         f"{HUMAN_WORDS_PER_HOUR:.0f} words-per-hour x "
+                         f"{TOKEN_UTILIZATION:.0%} utilization"
+                         if use_tokens else
+                         f"step 2 x {auto * 100:.0f}%"),
              "value": round(automated_hours, 1), "unit": "h/mo"},
             {"n": 5, "label": "Gross savings",
              "formula": "step 4 x step 3",
@@ -147,6 +180,10 @@ def compute(params: Optional[dict] = None,
              "value": round(roi_pct, 1) if roi_pct is not None else None,
              "unit": "%"},
         ],
+        "hoursBasis": "tokens" if use_tokens else "assumptions",
+        "tokenHoursMonthly": round(tok_hours, 1),
+        "assumptionHoursMonthly": round(assumption_hours, 1),
+        "measuredTokensMonthly": int(measured_tokens_monthly or 0),
         "netMonthlyUsd": round(net_monthly, 2),
         "annualNetUsd": round(annual_net, 2),
         "roiPct": round(roi_pct, 1) if roi_pct is not None else None,
