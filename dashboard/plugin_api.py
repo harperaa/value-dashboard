@@ -104,3 +104,27 @@ def params(body: ParamsBody):
         updates["source"] = "manual"
         roi.save_params(updates)
     return {"ok": True, "state": _public_state()}
+
+
+# ---------------------------------------------------------------------------
+# Accomplishments — read by the acvc /accomplishments aggregator and shown
+# on the hermes Achievements page. Full credit when every item is done.
+# ---------------------------------------------------------------------------
+
+ACHIEVEMENT = {
+    "id": "roi-navigator",
+    "name": "ROI Navigator",
+    "icon": "📊",
+    "description": "Ground your AI ROI in real numbers: collect usage "
+                   "and tune the assumptions to your business.",
+}
+
+
+def achievements_progress() -> dict:
+    items = [
+        {"id": "usage", "label": "Collect real LLM usage on the dashboard",
+         "done": bool(store.kv_get("usageSnapshot"))},
+        {"id": "params", "label": "Tune the ROI assumptions to your company",
+         "done": bool(store.kv_get("roiParams"))},
+    ]
+    return {"items": items, "complete": all(i["done"] for i in items)}
